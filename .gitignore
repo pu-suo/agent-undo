@@ -1,0 +1,16 @@
+# Go build output
+/bin/
+*.exe
+*.test
+*.out
+
+# Receipts the recorder writes while you test
+/receipts/
+
+# Editors and OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/

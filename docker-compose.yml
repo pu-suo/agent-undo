@@ -1,0 +1,16 @@
+# Starts a Postgres database on your laptop for this project.
+#   docker compose up -d      start it in the background
+#   docker compose down -v    stop it and wipe all its data, to start fresh
+services:
+  db:
+    image: postgres:17
+    # wal_level=logical makes Postgres keep a change log detailed enough to say
+    # which rows changed, and what their old and new values were.
+    command: ["postgres", "-c", "wal_level=logical"]
+    environment:
+      POSTGRES_PASSWORD: postgres # fine for a laptop demo, never for real data
+      POSTGRES_DB: shop
+    ports:
+      - "5432:5432" # if 5432 is already taken, change the left number, e.g. "5433:5432"
+    volumes:
+      - ./sql:/sql:ro # lets psql inside the container run the demo's .sql files
