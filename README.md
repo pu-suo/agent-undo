@@ -150,6 +150,7 @@ go test ./...          # all tests, against the PostgreSQL from docker-compose.y
 Each end-to-end test creates its own database and replication slot.
 
 - **Differential tests** run 16 scenarios twice: against a recorded database where the agent runs and is then undone, and against a control database that never sees the agent's writes. Every difference between the two must come with a reported conflict or refusal. The scenarios cover cascading deletes, user triggers, unique collisions, large (TOASTed) values, JSON, arrays and binary data, generated columns, partitions, concurrent DDL, primary key changes and `TRUNCATE`.
+- **Randomized differential test:** generates random agent runs with people's edits mixed in, undoes each run, and compares the result with a control database. Across 4,000 runs on PostgreSQL 15 to 18, no row differed from the control without undo reporting it. Results and commands are in [docs/benchmarks.md](docs/benchmarks.md).
 - **Crash test:** an agent makes 600 single-row commits while the recorder, a separate process, is SIGKILLed at random 50 to 300 ms intervals. Every row must land in the receipt exactly once.
 - **Regression tests** cover each fixed bug, such as transactions that began before a seal, and deletes that would cascade to other people's rows.
 
