@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "17"] # the oldest and newest supported versions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Start Postgres ${{ matrix.postgres }}
+        run: docker compose up -d --wait
+        env:
+          PG_VERSION: ${{ matrix.postgres }}
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - run: go vet ./...
+
+      - name: Test (unit, end to end, the 16 hard cases and the crash test)
+        run: go test -race -count=1 ./...
+
+      - name: Look for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

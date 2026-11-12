@@ -16,7 +16,7 @@ This matters more now that agents write to live databases directly. With Google'
 
 ## How it works
 
-The agent logs in as its own database user and sets `application_name` to its run ID. After each statement the agent runs, a trigger writes that ID into the WAL (Postgres's write-ahead log) inside the agent's transaction. A small Go service reads the WAL through logical decoding and saves the changes from tagged transactions as a receipt for that run.
+The agent logs in as its own database user and sets `application_name` to its run ID. Before each statement the agent runs, a trigger writes a tag row naming the run, so in the WAL (Postgres's write-ahead log) the tag lands just before that statement's changes, inside the agent's transaction. Every table has this trigger, so no write path can skip it, and only the trigger can write tag rows, so tags can't be forged. The trigger also blocks agent writes when recording isn't working. A small Go service reads the WAL through logical decoding and adds every change that follows a tag to that run's receipt. It confirms a position to Postgres only after the receipt is on disk.
 
 To undo a run, the tool walks the receipt from newest change to oldest and compares each change with the row as it is now, one column at a time. Each comparison ends in one of three results:
 
@@ -46,8 +46,10 @@ People use a command line. In v1, only a person can apply an undo.
 | Command | What it does |
 | --- | --- |
 | `undo show run-42` | Lists every row run 42 changed, before and after |
-| `undo preview run-42` | Shows what undo would restore, flag or refuse, without changing anything |
-| `undo apply run-42` | Applies the restores and lists the flagged changes for a person to resolve |
+| `undo preview run-42` | Shows what undo would restore, flag or refuse, without changing anything, and prints a hash of the plan |
+| `undo apply --plan <hash> run-42` | Applies exactly the previewed plan and lists the flagged changes for a person to resolve |
+
+Apply first seals the run, so the database refuses any more writes from it. It then waits until the recorder has caught up and redoes the plan with the rows locked. If the result differs from the previewed plan, it stops.
 
 Agents get MCP tools, MCP being the standard way AI agents call outside functions:
 

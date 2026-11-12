@@ -18,53 +18,74 @@ later edits. Full design: docs/design.md. Demo: README.md.
 - Keep steps small: one idea, one change, run it, then commit with a clear message.
 - After each step, ask me one short question to check I understood it.
 
-## How it works (v1)
-1. Tag. The agent logs in as `agent_bot` and sets `application_name` to its run ID
-   (for example run-42). The statement trigger `label_agent_write` (SECURITY
-   DEFINER) calls `pg_logical_emit_message(true, 'agent_run', <run ID>)`, so the
-   run ID lands in the WAL inside the agent's transaction. EXECUTE on
-   pg_logical_emit_message is revoked from PUBLIC, so nobody else can forge a tag.
-   Setup lives in sql/1_setup.sql.
-2. Record. A Go service streams changes over logical replication with
-   github.com/jackc/pglogrepl, plugin `pgoutput`, options `proto_version '2'`,
-   `publication_names 'undo_pub'`, `messages 'true'`. Start from pglogrepl's
-   example/pglogrepl_demo/main.go. Tables use REPLICA IDENTITY FULL, so UPDATE and
-   DELETE carry the full old row. A transaction that contains an `agent_run`
-   message belongs to that run; transactions without one are people's work.
-3. Receipt. Append each change of a run (LSN, table, operation, key, old row,
-   new row) to receipts/<run>.jsonl. Confirm an LSN to Postgres (standby status
-   update) only AFTER its receipt line is fsynced. After a restart Postgres
-   resends unconfirmed changes, so skip LSNs already in the receipt.
-4. Undo. Walk the receipt from newest change to oldest. Compare each change with
-   the row as it is now, column by column:
+## How it works (v1, as built)
+1. Tag. `undo init` installs schema `agent_undo` (internal/setup/install.sql) and a
+   BEFORE ... FOR EACH STATEMENT trigger `agent_undo_tag` on EVERY permanent table
+   outside system schemas (not just tables the agent can write: column grants,
+   views, SET ROLE and definer functions would otherwise escape). Partitioned
+   roots are published with ONLY, so later partitions are published too. Before
+   each agent statement, the SECURITY DEFINER function
+   `agent_undo.tag_statement()` checks the run ID
+   (`^run-[a-z0-9][a-z0-9._-]{0,58}$`, from application_name), refuses writes
+   unless the slot exists in this database and is ready (confirmed_flush_lsn not
+   null) and not lost, records the run in `agent_undo.run` (first_lsn), takes a
+   FOR SHARE lock on that row and refuses sealed runs, then upserts
+   `agent_undo.tag` (only the trigger can write it, so tags can't be forged). In
+   the WAL the tag row comes just BEFORE the statement's changes. (The first
+   design used pg_logical_emit_message in an AFTER trigger; changed because
+   REVOKE on it needs a superuser, and tag-first lets the recorder stream without
+   buffering anyone's transactions.)
+2. Record. `undo record` (internal/capture) streams pgoutput (`proto_version '2'`,
+   the publication from state.json). A change after a tag belongs to that tag's run
+   (statement by statement); changes before any tag are people's and are dropped.
+   Tables use REPLICA IDENTITY FULL, so UPDATE and DELETE carry the whole old row;
+   an unchanged large value ('u') is filled from the old row.
+3. Receipt. receipts/<run>.jsonl (internal/receipt): "change" lines, then a
+   "commit" line per transaction. Confirm COMMIT.end_lsn only after the receipt is
+   fsynced and receipts/state.json is saved. A cut-off tail is truncated on open;
+   after a restart, a transaction whose commit LSN is below the receipt's last
+   end LSN is skipped. Keepalive positions are confirmed when no transaction is
+   open, so the slot advances while agents are idle.
+4. Undo. internal/undo: per row, start from the live row and walk the run's
+   changes newest to oldest, comparing exact output text (never SQL `=`):
    - restore: the column still holds the agent's value, so put the old value back
-   - flag: someone changed that same column since; keep their value and report it
-   - refuse: no safe way back (for example, a table without a primary key)
+   - flag (keep): someone changed it since; keep their value and report it
+   - refuse: no safe way back (no primary key, primary key changed, TRUNCATE,
+     incomplete receipt, tables with user triggers or rules, RLS)
+   Preview is read-only and prints a plan hash. Apply seals the run (UPDATE of
+   agent_undo.run, which waits for the run's open transactions via their FOR
+   SHARE locks), waits until the slot AND state.json reach
+   pg_current_wal_insert_lsn(), re-decides with rows locked (batched reads),
+   requires the same hash, writes in one transaction (batched; on a constraint
+   error, retries with a savepoint per row), reads every row back, then commits.
+   Known limit: a person re-writing the agent's exact value is reverted.
    Rule: never silently overwrite someone else's later edit.
 
 ## Decisions already made
 - Go, latest stable; module path github.com/pu-suo/agent-undo.
-- Postgres 17 in Docker (anything 14+ works).
+- Postgres 17 in Docker; tested on 14 and 17.
 - Receipts are JSON Lines files, one per run.
 - v1: only a person can apply an undo. Agent tools come over MCP after the CLI
   works: show_changes and preview_undo first, request_undo with approval later.
-- v1 does not handle DROP or TRUNCATE: agent_bot is simply not granted them.
-- The test_decoding slot `peek` in sql/1_setup.sql is only for looking by hand.
+- v1 refuses TRUNCATE runs; DROP is impossible because the agent owns nothing.
+- stdlib flag (no cobra), log/slog to stderr, data to stdout; exit codes 0/1/2/3.
 
-## Layout (planned; create folders as they're needed)
-- cmd/undo/          command line: record, show, preview, apply
-- internal/capture/  replication stream to changes
-- internal/receipt/  read and write receipts
-- internal/undo/     restore, flag and refuse rules
+## Layout
+- cmd/undo/          command line: init, check, record, show, preview, apply, teardown
+- internal/db/       connections with pinned output settings (empty search_path!)
+- internal/setup/    install.sql, init, check, teardown
+- internal/capture/  replication stream to receipt changes
+- internal/receipt/  read and write receipts, state.json
+- internal/undo/     restore, flag and refuse rules; preview and apply
+- e2e/               end-to-end tests: demo, 16 hard cases, crash test
 - sql/               demo scripts, run in number order (see README)
-- prototype/         Python prototype and the 16 hard cases to port (reference only)
+- prototype/         Python prototype (reference only)
 
 ## Commands
-- Start the database: `docker compose up -d`. Wipe and start fresh: `docker compose down -v`
-- Run the demo: the numbered steps in README.md
-- Connect from Go: postgres://postgres:postgres@localhost:5432/shop
-- Replication connection from Go: the same URL plus `?replication=database`
-- Tests: `go test ./...` (the database must be running)
+- Start the database: `docker compose up -d --wait`. Wipe: `docker compose down -v`
+- Run the demo: the steps in README.md (AGENT_UNDO_DB=postgres://postgres:postgres@localhost:5432/shop)
+- Tests: `go test -short ./...` (no database) or `go test ./...` (database running);
+  AGENT_UNDO_TEST_DB points the e2e tests at another server.
 
 ## Milestones
 - Nov 15 checkpoint: the recorder prints the agent's changes with run ID and old

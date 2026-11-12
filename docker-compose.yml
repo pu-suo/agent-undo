@@ -3,14 +3,29 @@
 #   docker compose down -v    stop it and wipe all its data, to start fresh
 services:
   db:
-    image: postgres:17
-    # wal_level=logical makes Postgres keep a change log detailed enough to say
-    # which rows changed, and what their old and new values were.
-    command: ["postgres", "-c", "wal_level=logical"]
+    image: postgres:${PG_VERSION:-17} # CI also tests other versions
+    command:
+      - postgres
+      # Keep a change log detailed enough to say which rows changed, and
+      # what their old and new values were.
+      - -c
+      - wal_level=logical
+      # Room for the replication slots that tests create.
+      - -c
+      - max_replication_slots=32
+      - -c
+      - max_wal_senders=32
+      # If the recorder stays stopped, give up its slot before the disk fills.
+      - -c
+      - max_slot_wal_keep_size=2GB
     environment:
       POSTGRES_PASSWORD: postgres # fine for a laptop demo, never for real data
       POSTGRES_DB: shop
     ports:
-      - "5432:5432" # if 5432 is already taken, change the left number, e.g. "5433:5432"
+      - "127.0.0.1:5432:5432" # this machine only; change the first 5432 if it is taken
     volumes:
       - ./sql:/sql:ro # lets psql inside the container run the demo's .sql files
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "shop"]
+      interval: 2s
+      retries: 30
