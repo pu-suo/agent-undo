@@ -81,9 +81,9 @@ grant select, insert, update, delete on customers, orders to undo_test_agent;
 
 // The README demo: the agent cancels customers 1 to 10 and deletes their
 // orders, while support edits customers. Undo must restore the agent's
-// changes, keep support's, and flag the one clash.
+// changes, keep support's, and report the one conflict.
 func TestUndoTheDemo(t *testing.T) {
-	twin := newTwin(t, demoSchema)
+	control := newControl(t, demoSchema)
 	d := newDB(t, demoSchema)
 	d.startRecorder(t)
 
@@ -100,7 +100,7 @@ func TestUndoTheDemo(t *testing.T) {
 	}
 	for _, sql := range support {
 		d.exec(t, sql)
-		twin.exec(t, sql)
+		control.exec(t, sql)
 	}
 	d.waitCaughtUp(t)
 	before := snapshot(t, d)
@@ -123,11 +123,11 @@ func TestUndoTheDemo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !applied.Applied || !applied.NeedsPerson() {
-		t.Errorf("apply: applied=%v needsPerson=%v, want both", applied.Applied, applied.NeedsPerson())
+	if !applied.Applied || !applied.NeedsReview() {
+		t.Errorf("apply: applied=%v needsReview=%v, want both", applied.Applied, applied.NeedsReview())
 	}
-	if d := diff(snapshot(t, d), snapshot(t, twin)); len(d) > 0 {
-		t.Errorf("after undo the database differs from the twin:\n%s", strings.Join(d, "\n"))
+	if d := diff(snapshot(t, d), snapshot(t, control)); len(d) > 0 {
+		t.Errorf("after undo the database differs from the control:\n%s", strings.Join(d, "\n"))
 	}
 
 	// The run is sealed now: the agent can't keep going with it.
@@ -165,14 +165,14 @@ func TestApplyNeedsTheSamePlan(t *testing.T) {
 // reverse the agent's later change but keep the person's value rather than
 // jumping back to the value from before the run.
 func TestEditBetweenTwoAgentTransactions(t *testing.T) {
-	twin := newTwin(t, demoSchema)
+	control := newControl(t, demoSchema)
 	d := newDB(t, demoSchema)
 	d.startRecorder(t)
 	if err := d.agent(t, "run-5", `update customers set plan = 'cancelled' where id = 1`); err != nil {
 		t.Fatal(err)
 	}
 	d.exec(t, `update customers set plan = 'basic' where id = 1`)
-	twin.exec(t, `update customers set plan = 'basic' where id = 1`)
+	control.exec(t, `update customers set plan = 'basic' where id = 1`)
 	if err := d.agent(t, "run-5", `update customers set plan = 'trial' where id = 1`); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestEditBetweenTwoAgentTransactions(t *testing.T) {
 	if got := d.query(t, `select plan from customers where id = 1`)[0]; got != "basic" {
 		t.Errorf("plan = %q, want the person's 'basic'", got)
 	}
-	if d := diff(snapshot(t, d), snapshot(t, twin)); len(d) > 0 {
-		t.Errorf("differs from the twin:\n%s", strings.Join(d, "\n"))
+	if d := diff(snapshot(t, d), snapshot(t, control)); len(d) > 0 {
+		t.Errorf("differs from the control:\n%s", strings.Join(d, "\n"))
 	}
 }

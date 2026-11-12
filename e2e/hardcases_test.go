@@ -9,13 +9,13 @@ import (
 	"github.com/pu-suo/agent-undo/internal/undo"
 )
 
-// hardCase is one of the 16 hard cases from prototype/undo_scorecard.py.
+// hardCase is one of the 16 scenarios from docs/archive/prototype/undo_scorecard.py.
 type hardCase struct {
 	name   string
 	setup  string   // run as an admin in both databases
 	agent  []string // run as the agent, in the recorded database only
 	people []string // run as a person in both databases
-	want   string   // "same": undo matches the twin; "flagged": undo asks a person
+	want   string   // "same": undo matches the control; "review": undo reports conflicts or refusals for review
 }
 
 // allTables lets the agent write every table in the schema.
@@ -38,14 +38,14 @@ var hardCases = []hardCase{
 			begin update stats set n = n - 1 where plan = old.plan; update stats set n = n + 1 where plan = new.plan; return new; end $$;
 			create trigger bump after update on t for each row execute function bump();` + allTables,
 		agent: []string{`update t set plan = 'b' where id = 1`},
-		want:  "flagged", // refused: the trigger would fire again during undo
+		want:  "review", // refused: the trigger would fire again during undo
 	},
 	{
 		name:   "a restored row collides with a new unique value",
 		setup:  `create table u(id int primary key, email text unique); insert into u values (1, 'a@x');` + allTables,
 		agent:  []string{`delete from u where id = 1`},
 		people: []string{`insert into u values (2, 'a@x')`},
-		want:   "flagged",
+		want:   "review",
 	},
 	{
 		name: "a restored row's parent was deleted by a person",
@@ -53,7 +53,7 @@ var hardCases = []hardCase{
 			insert into p values (1); insert into k values (1, 1);` + allTables,
 		agent:  []string{`delete from k where id = 1`},
 		people: []string{`delete from p where id = 1`},
-		want:   "flagged",
+		want:   "review",
 	},
 	{
 		name: "a very large text value in the same row",
@@ -91,13 +91,13 @@ var hardCases = []hardCase{
 		name:  "the agent changes a primary key",
 		setup: `create table t(id int primary key, v text); insert into t values (1, 'a');` + allTables,
 		agent: []string{`update t set id = 2 where id = 1`},
-		want:  "flagged", // refused in v1
+		want:  "review", // refused in v1
 	},
 	{
 		name:  "a table with no primary key",
 		setup: `create table t(a int, b text); insert into t values (1, 'x'), (1, 'x'), (2, 'y');` + allTables,
 		agent: []string{`delete from t where a = 1`},
-		want:  "flagged", // refused: the rows can't be identified
+		want:  "review", // refused: the rows can't be identified
 	},
 	{
 		name: "a partitioned table",
@@ -126,7 +126,7 @@ var hardCases = []hardCase{
 		name:  "the agent runs TRUNCATE",
 		setup: `create table t(id int primary key, v text); insert into t values (1, 'a'), (2, 'b');` + allTables + `grant truncate on t to undo_test_agent;`,
 		agent: []string{`truncate t`},
-		want:  "flagged", // refused: the WAL does not keep truncated rows
+		want:  "review", // refused: the WAL does not keep truncated rows
 	},
 	{
 		name:  "the agent drops a table",
@@ -139,7 +139,7 @@ var hardCases = []hardCase{
 func TestHardCases(t *testing.T) {
 	for _, hc := range hardCases {
 		t.Run(hc.name, func(t *testing.T) {
-			twin := newTwin(t, hc.setup)
+			control := newControl(t, hc.setup)
 			d := newDB(t, hc.setup)
 			d.startRecorder(t)
 
@@ -150,7 +150,7 @@ func TestHardCases(t *testing.T) {
 			}
 			for _, sql := range hc.people {
 				d.exec(t, sql)
-				twin.tryExec(t, sql) // may fail in the twin, where the agent never ran
+				control.tryExec(t, sql) // may fail in the control database, where the agent never ran
 			}
 			d.waitCaughtUp(t)
 
@@ -166,13 +166,13 @@ func TestHardCases(t *testing.T) {
 				}
 			}
 
-			differences := diff(snapshot(t, d), snapshot(t, twin))
+			differences := diff(snapshot(t, d), snapshot(t, control))
 			got := "same"
 			switch {
-			case len(differences) > 0 && plan.NeedsPerson():
-				got = "flagged"
+			case len(differences) > 0 && plan.NeedsReview():
+				got = "review"
 			case len(differences) > 0:
-				t.Fatalf("WRONG: undo finished, flagged nothing, and the data differs from the twin:\n%s",
+				t.Fatalf("WRONG: undo finished, reported nothing, and the data differs from the control:\n%s",
 					strings.Join(differences, "\n"))
 			}
 			if got != hc.want {
@@ -189,6 +189,6 @@ func (d *testDB) tryExec(t *testing.T, sql string) {
 	conn := d.connect(t, d.userConfig())
 	defer conn.Close(t.Context())
 	if _, err := conn.PgConn().Exec(t.Context(), sql).ReadAll(); err != nil {
-		t.Logf("in the twin, %q failed: %v", sql, err)
+		t.Logf("in the control, %q failed: %v", sql, err)
 	}
 }

@@ -1,30 +1,27 @@
-# Starts a Postgres database on your laptop for this project.
-#   docker compose up -d      start it in the background
-#   docker compose down -v    stop it and wipe all its data, to start fresh
+# PostgreSQL for development, the quick start and the end-to-end tests.
+#   docker compose up -d --wait   start it
+#   docker compose down -v        stop it and delete its data
+# PG_VERSION selects the major version (default 17); CI runs 15 through 18.
 services:
   db:
-    image: postgres:${PG_VERSION:-17} # CI also tests other versions
+    image: postgres:${PG_VERSION:-17}
     command:
       - postgres
-      # Keep a change log detailed enough to say which rows changed, and
-      # what their old and new values were.
       - -c
-      - wal_level=logical
-      # Room for the replication slots that tests create.
+      - wal_level=logical # required for logical decoding
       - -c
-      - max_replication_slots=32
+      - max_replication_slots=32 # each end-to-end test creates its own slot
       - -c
       - max_wal_senders=32
-      # If the recorder stays stopped, give up its slot before the disk fills.
       - -c
-      - max_slot_wal_keep_size=2GB
+      - max_slot_wal_keep_size=2GB # caps the WAL a stopped recorder's slot can hold
     environment:
-      POSTGRES_PASSWORD: postgres # fine for a laptop demo, never for real data
+      POSTGRES_PASSWORD: postgres # development only
       POSTGRES_DB: shop
     ports:
-      - "127.0.0.1:5432:5432" # this machine only; change the first 5432 if it is taken
+      - "127.0.0.1:5432:5432" # loopback only
     volumes:
-      - ./sql:/sql:ro # lets psql inside the container run the demo's .sql files
+      - ./examples:/examples:ro # the example SQL scripts, for psql in the container
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "shop"]
       interval: 2s

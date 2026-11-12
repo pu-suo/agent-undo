@@ -11,7 +11,7 @@
 //	check     check that recording covers everything the agent can write
 //	record    write each agent run's changes to its receipt (runs until stopped)
 //	show      print what a run changed
-//	preview   show what undo would restore, flag or refuse, without changing anything
+//	preview   show what undo would restore, keep or refuse, without changing anything
 //	apply     undo a run exactly as previewed
 //	teardown  remove agent-undo from a database
 //	version   print the version
@@ -21,8 +21,8 @@
 // The database is the one named by --db, else by AGENT_UNDO_DB, else by the
 // PG* environment variables and ~/.pgpass, as with psql.
 //
-// Exit codes: 0 success, 1 error, 2 bad usage, 3 something needs a person
-// (undo flagged or refused changes).
+// Exit codes: 0 success, 1 error, 2 bad usage, 3 the plan has conflicts or
+// refused rows that require manual review.
 package main
 
 import (
@@ -62,9 +62,9 @@ var commands = []command{
 	{"version", "", "print the version", runVersion},
 }
 
-// errNeedsPerson means the command worked but left something for a person to
-// decide, such as a flagged change. It exits with code 3.
-var errNeedsPerson = errors.New("some changes need a person")
+// errNeedsReview means the command worked, but the plan has conflicts or
+// refused rows that require manual review. It exits with code 3.
+var errNeedsReview = errors.New("the plan requires manual review")
 
 // usageError is a mistake in the command line. It exits with code 2.
 type usageError struct{ msg string }
@@ -115,7 +115,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 	switch {
 	case err == nil, errors.Is(err, flag.ErrHelp):
 		return 0
-	case errors.Is(err, errNeedsPerson):
+	case errors.Is(err, errNeedsReview):
 		return 3
 	case errors.Is(err, errFlags):
 		return 2
@@ -217,19 +217,25 @@ func printable(s string) string {
 	}, s)
 }
 
+// version is set by release builds (-ldflags "-X main.version=v0.1.0").
+// Otherwise it comes from the module version, which go install records.
+var version string
+
 func runVersion(_ context.Context, a *app, args []string) error {
 	if _, err := parse(a.flags("version"), args, 0); err != nil {
 		return err
 	}
-	version, revision := "(unknown)", ""
+	v, revision := version, ""
 	if info, ok := debug.ReadBuildInfo(); ok {
-		version = info.Main.Version
+		if v == "" {
+			v = info.Main.Version
+		}
 		for _, s := range info.Settings {
 			if s.Key == "vcs.revision" {
 				revision = s.Value
 			}
 		}
 	}
-	fmt.Fprintln(a.stdout, "undo", version, revision)
+	fmt.Fprintln(a.stdout, "undo", v, revision)
 	return nil
 }

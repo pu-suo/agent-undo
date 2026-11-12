@@ -118,7 +118,7 @@ func (r *Recorder) runOnce(ctx context.Context) error {
 			server.SystemID, server.Timeline, st.SystemID, st.Timeline)
 	case server.WALEnd < st.Confirmed:
 		// For example, the database was restored from a snapshot. Starting
-		// here would silently skip the commits made since.
+		// here would skip the commits made since, without any error.
 		return fmt.Errorf("the server's WAL ends at %s, before the receipts' %s; was the database restored?", server.WALEnd, st.Confirmed)
 	}
 
@@ -212,7 +212,7 @@ func (s *session) stream(ctx context.Context) error {
 		if ctx.Err() != nil {
 			// Shutting down: confirm what is complete. The status update
 			// ignores contexts, so a socket deadline bounds it instead.
-			s.conn.Conn().SetDeadline(time.Now().Add(5 * time.Second))
+			_ = s.conn.Conn().SetDeadline(time.Now().Add(5 * time.Second)) // best effort
 			return s.confirm(context.Background())
 		}
 		if pgconn.Timeout(err) {

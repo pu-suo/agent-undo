@@ -17,3 +17,6 @@ __pycache__/
 
 # Binaries built from the repo root (go build ./cmd/undo)
 /undo
+
+# GoReleaser output
+/dist/

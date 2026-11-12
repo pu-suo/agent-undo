@@ -36,8 +36,8 @@ func runPreview(ctx context.Context, a *app, args []string) error {
 	if plan.Refused == "" && !*asJSON {
 		fmt.Fprintf(a.stdout, "\nNothing has changed yet. To apply this plan: undo apply --plan %s %s\n", plan.Hash, plan.Run)
 	}
-	if plan.NeedsPerson() {
-		return errNeedsPerson
+	if plan.NeedsReview() {
+		return errNeedsReview
 	}
 	return nil
 }
@@ -71,8 +71,8 @@ func runApply(ctx context.Context, a *app, args []string) error {
 	if plan.Applied && !*asJSON {
 		fmt.Fprintf(a.stdout, "\nApplied. The database now refuses writes from %s.\n", plan.Run)
 	}
-	if plan.NeedsPerson() {
-		return errNeedsPerson
+	if plan.NeedsReview() {
+		return errNeedsReview
 	}
 	return nil
 }
@@ -109,7 +109,7 @@ func printPlan(w io.Writer, plan *undo.Plan, asJSON bool) error {
 			line += "  " + detail
 		}
 		fmt.Fprintln(w, printable(line))
-		for _, f := range r.Flags {
+		for _, f := range r.Conflicts {
 			fmt.Fprintln(w, printable("           kept: "+f))
 		}
 		for _, n := range r.Notes {

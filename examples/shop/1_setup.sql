@@ -1,11 +1,11 @@
--- 1_setup.sql: run once, as the admin user (postgres):
---   docker compose exec db psql -U postgres -d shop -f /sql/1_setup.sql
+-- 1_setup.sql: the example shop. Run it once, as the postgres user:
+--   docker compose exec db psql -U postgres -d shop -f /examples/shop/1_setup.sql
 --
--- Builds a tiny shop and gives the "agent" its own login. Recording itself
--- (the tag trigger, the publication and the replication slot) is set up
--- afterwards by `undo init`.
+-- Creates 20 customers and 40 orders, and a login role for the agent.
+-- Recording (the tag trigger, the publication and the replication slot) is
+-- set up afterwards by undo init.
 
--- A tiny shop to experiment on: 20 customers, 40 orders.
+-- 20 customers and 40 orders.
 create table customers (
   id    int primary key,
   name  text not null,

@@ -187,7 +187,7 @@ func TestDiscard(t *testing.T) {
 }
 
 // A damaged line in the middle of committed data is not a cut-off write, so
-// it must be an error instead of being silently skipped.
+// it must be an error instead of being skipped.
 func TestCorruptCommittedLine(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "receipts")
 	must(t, os.MkdirAll(dir, 0o700))

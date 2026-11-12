@@ -24,10 +24,10 @@ grant select, insert, update, delete on p, c to undo_test_agent;
 `
 
 // runAndCompare runs the agent and people's SQL, undoes the run, and returns
-// the plan and the differences from a twin where the agent never ran.
+// the plan and the differences from a control where the agent never ran.
 func runAndCompare(t *testing.T, schema string, agentSQL, peopleSQL []string) (*undo.Plan, []string) {
 	t.Helper()
-	twin := newTwin(t, schema)
+	control := newControl(t, schema)
 	d := newDB(t, schema)
 	d.startRecorder(t)
 	if err := d.agent(t, "run-1", agentSQL...); err != nil {
@@ -35,7 +35,7 @@ func runAndCompare(t *testing.T, schema string, agentSQL, peopleSQL []string) (*
 	}
 	for _, sql := range peopleSQL {
 		d.exec(t, sql)
-		twin.tryExec(t, sql)
+		control.tryExec(t, sql)
 	}
 	d.waitCaughtUp(t)
 	previewed := d.preview(t, "run-1")
@@ -43,14 +43,14 @@ func runAndCompare(t *testing.T, schema string, agentSQL, peopleSQL []string) (*
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	return applied, diff(snapshot(t, d), snapshot(t, twin))
+	return applied, diff(snapshot(t, d), snapshot(t, control))
 }
 
 func TestUndoRemovesRowsTheAgentInserted(t *testing.T) {
 	plan, differences := runAndCompare(t, parentChildSchema,
 		[]string{`insert into p values (10, 'new')`, `insert into c values (10, 10)`}, nil)
-	if len(differences) > 0 || plan.NeedsPerson() {
-		t.Errorf("differs from the twin: %v; plan %+v", differences, plan.Rows)
+	if len(differences) > 0 || plan.NeedsReview() {
+		t.Errorf("differs from the control: %v; plan %+v", differences, plan.Rows)
 	}
 }
 
@@ -83,8 +83,8 @@ func TestIdentityColumnRowIsPutBack(t *testing.T) {
 		insert into t (v) values ('a'), ('b');
 		grant select, insert, update, delete on t to undo_test_agent;`
 	plan, differences := runAndCompare(t, schema, []string{`delete from t where id = 1`}, nil)
-	if len(differences) > 0 || plan.NeedsPerson() {
-		t.Errorf("differs from the twin: %v; plan %+v", differences, plan.Rows)
+	if len(differences) > 0 || plan.NeedsReview() {
+		t.Errorf("differs from the control: %v; plan %+v", differences, plan.Rows)
 	}
 }
 
@@ -96,10 +96,10 @@ func TestOnUpdateCascadeIsNotSilent(t *testing.T) {
 		insert into p values (1, 'a'); insert into c values (1, 'a');
 		grant select, insert, update, delete on p, c to undo_test_agent;`
 	plan, differences := runAndCompare(t, schema, []string{`update p set code = 'b' where id = 1`}, nil)
-	if len(differences) > 0 && !plan.NeedsPerson() {
+	if len(differences) > 0 && !plan.NeedsReview() {
 		t.Errorf("silently wrong: %v", differences)
 	}
-	if !plan.NeedsPerson() {
+	if !plan.NeedsReview() {
 		t.Errorf("plan %+v: want the cascading key refused", plan.Rows)
 	}
 }
@@ -110,7 +110,7 @@ func TestRecreatedRowDeletedByAPersonStaysDeleted(t *testing.T) {
 	plan, differences := runAndCompare(t, parentChildSchema,
 		[]string{`begin`, `delete from c where id = 1`, `delete from p where id = 1`, `insert into p values (1, 'remade')`, `commit`},
 		[]string{`delete from p where id = 1`})
-	if len(differences) > 0 && !plan.NeedsPerson() {
+	if len(differences) > 0 && !plan.NeedsReview() {
 		t.Errorf("silently wrong: %v", differences)
 	}
 	if got := len(plan.Rows); got == 0 {
@@ -122,7 +122,7 @@ func TestRenamedColumnIsRefused(t *testing.T) {
 	plan, differences := runAndCompare(t, parentChildSchema,
 		[]string{`update p set name = 'agent' where id = 1`},
 		[]string{`alter table p rename column name to title`})
-	if !plan.NeedsPerson() || len(differences) == 0 {
+	if !plan.NeedsReview() || len(differences) == 0 {
 		t.Errorf("plan %+v, differences %v: want the renamed column refused, not silently skipped", plan.Rows, differences)
 	}
 }
@@ -151,7 +151,7 @@ func TestSealStopsTransactionsThatBeganBefore(t *testing.T) {
 	if _, err := early.Exec(ctx, `update p set name = 'late' where id = 1`); err == nil {
 		t.Error("a transaction from before the seal wrote after the undo")
 	}
-	early.Exec(ctx, `rollback`)
+	_, _ = early.Exec(ctx, `rollback`) // the transaction already failed
 }
 
 // A run with an open transaction that already wrote can't be sealed until

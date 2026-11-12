@@ -185,17 +185,17 @@ func bare(s string) bool {
 
 // target is what a row should become after undo.
 type target struct {
-	exists bool
-	row    receipt.Row // writable columns
-	flags  []string    // later changes by someone else, which undo keeps
-	notes  []string
+	exists    bool
+	row       receipt.Row // writable columns
+	conflicts []string    // later changes by someone else, which undo keeps
+	notes     []string
 }
 
 // simulate works out a row's target. It starts from the row as it is now
 // and walks the run's changes from newest to oldest. For each change it asks
 // whether the row still shows what the agent left; if so the change is
 // reversed, and if not, someone else changed it since, so that part is kept
-// and flagged. A column the agent set and nobody touched goes back to its
+// and reported as a conflict. A column the agent set and nobody touched goes back to its
 // value before the run; columns the agent never changed are never written.
 func simulate(t *table, changes []receipt.Change, live receipt.Row, exists bool) target {
 	tg := target{exists: exists, row: keep(t, live)}
@@ -210,7 +210,7 @@ walk:
 		switch c.Op {
 		case receipt.Update:
 			if !tg.exists {
-				tg.flags = append(tg.flags, "someone deleted the row after the agent changed it")
+				tg.conflicts = append(tg.conflicts, "someone deleted the row after the agent changed it")
 				break walk
 			}
 			for _, col := range c.New.Columns() {
@@ -223,7 +223,7 @@ walk:
 				case receipt.Same(now, c.Old[col]): // already back to the old value
 				default:
 					kept[col] = true
-					tg.flags = append(tg.flags, fmt.Sprintf("%s: someone changed it to %s after the agent set it to %s",
+					tg.conflicts = append(tg.conflicts, fmt.Sprintf("%s: someone changed it to %s after the agent set it to %s",
 						col, receipt.Quote(now), receipt.Quote(c.New[col])))
 				}
 			}
@@ -233,17 +233,17 @@ walk:
 					// The row existed before the agent re-created it, and
 					// someone deleted it since. Putting the old row back would
 					// undo their delete.
-					tg.flags = append(tg.flags, "someone deleted the row after the agent re-created it")
+					tg.conflicts = append(tg.conflicts, "someone deleted the row after the agent re-created it")
 					break walk
 				}
 				continue // someone already deleted the row the agent inserted
 			}
 			if len(kept) > 0 {
-				tg.flags = append(tg.flags, "the row the agent inserted was edited since, so it is kept")
+				tg.conflicts = append(tg.conflicts, "the row the agent inserted was edited since, so it is kept")
 				break walk
 			}
 			if col := firstDifference(t, tg.row, c.New); col != "" {
-				tg.flags = append(tg.flags, fmt.Sprintf("someone changed %s in the row the agent inserted, so it is kept", col))
+				tg.conflicts = append(tg.conflicts, fmt.Sprintf("someone changed %s in the row the agent inserted, so it is kept", col))
 				break walk
 			}
 			tg.exists, tg.row = false, nil
@@ -253,7 +253,7 @@ walk:
 				continue
 			}
 			if firstDifference(t, tg.row, c.Old) != "" {
-				tg.flags = append(tg.flags, "someone created a different row with this key after the agent deleted it")
+				tg.conflicts = append(tg.conflicts, "someone created a different row with this key after the agent deleted it")
 				break walk
 			}
 			// Someone already put the same row back.

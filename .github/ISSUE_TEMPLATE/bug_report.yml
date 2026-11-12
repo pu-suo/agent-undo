@@ -1,0 +1,36 @@
+name: Bug report
+description: agent-undo did something it shouldn't, or failed to do what the docs describe
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: undo-version
+    attributes:
+      label: agent-undo version
+      description: The output of `undo version`.
+    validations:
+      required: true
+  - type: input
+    id: postgres-version
+    attributes:
+      label: PostgreSQL version
+      description: The output of `select version();`, and the managed service if you use one.
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of undo check
+      render: text
+  - type: textarea
+    id: output
+    attributes:
+      label: Command output or recorder logs
+      description: Remove any row data you can't share.
+      render: text

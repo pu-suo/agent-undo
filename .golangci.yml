@@ -1,0 +1,36 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+  settings:
+    staticcheck:
+      checks: # the defaults, minus two rewrites that read less clearly here
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1001 # De Morgan's law
+        - -QF1008 # dropping an embedded field from a selector
+  exclusions:
+    presets:
+      - std-error-handling # unchecked Close, Flush and print errors
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/pu-suo/agent-undo

@@ -66,10 +66,10 @@ func newDB(t *testing.T, schema string) *testDB {
 	return d
 }
 
-// newTwin creates a second database with the same schema and no recording,
+// newControl creates a second database with the same schema and no recording,
 // where the agent never runs. After undo, the recorded database should
 // match it.
-func newTwin(t *testing.T, schema string) *testDB {
+func newControl(t *testing.T, schema string) *testDB {
 	t.Helper()
 	return createDB(t, schema)
 }

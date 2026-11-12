@@ -36,12 +36,12 @@ func TestSimulate(t *testing.T) {
 	pro := row("id=1", "plan=pro", "phone=555")
 	cancelled := row("id=1", "plan=cancelled", "phone=555")
 	tests := []struct {
-		name    string
-		changes []receipt.Change
-		live    receipt.Row // nil: the row doesn't exist now
-		exists  bool        // the target
-		want    receipt.Row // the target row
-		flags   int
+		name      string
+		changes   []receipt.Change
+		live      receipt.Row // nil: the row doesn't exist now
+		exists    bool        // the target
+		want      receipt.Row // the target row
+		conflicts int
 	}{
 		{
 			name:    "nobody touched it since: restore",
@@ -55,10 +55,10 @@ func TestSimulate(t *testing.T) {
 			want: row("id=1", "plan=pro", "phone=999"),
 		},
 		{
-			name:    "someone changed the same column: keep theirs and flag it",
+			name:    "someone changed the same column: keep theirs and report a conflict",
 			changes: []receipt.Change{update(pro, cancelled)},
 			live:    row("id=1", "plan=basic", "phone=555"), exists: true,
-			want: row("id=1", "plan=basic", "phone=555"), flags: 1,
+			want: row("id=1", "plan=basic", "phone=555"), conflicts: 1,
 		},
 		{
 			name:    "already undone: nothing to do",
@@ -80,7 +80,7 @@ func TestSimulate(t *testing.T) {
 				update(row("id=1", "plan=basic", "phone=555"), row("id=1", "plan=trial", "phone=555")),
 			},
 			live: row("id=1", "plan=trial", "phone=555"), exists: true,
-			want: row("id=1", "plan=basic", "phone=555"), flags: 1,
+			want: row("id=1", "plan=basic", "phone=555"), conflicts: 1,
 		},
 		{
 			name:    "the agent inserted the row: delete it",
@@ -91,7 +91,7 @@ func TestSimulate(t *testing.T) {
 			name:    "someone edited the row the agent inserted: keep it",
 			changes: []receipt.Change{{Op: receipt.Insert, RelID: 1, New: pro}},
 			live:    row("id=1", "plan=pro", "phone=999"), exists: true,
-			want: row("id=1", "plan=pro", "phone=999"), flags: 1,
+			want: row("id=1", "plan=pro", "phone=999"), conflicts: 1,
 		},
 		{
 			name:    "the agent deleted the row: put it back",
@@ -102,12 +102,12 @@ func TestSimulate(t *testing.T) {
 			name:    "someone reused the deleted row's key: keep their row",
 			changes: []receipt.Change{{Op: receipt.Delete, RelID: 1, Old: pro}},
 			live:    row("id=1", "plan=new", "phone=NULL"), exists: true,
-			want: row("id=1", "plan=new", "phone=NULL"), flags: 1,
+			want: row("id=1", "plan=new", "phone=NULL"), conflicts: 1,
 		},
 		{
 			name:    "someone deleted the row the agent updated: leave it deleted",
 			changes: []receipt.Change{update(pro, cancelled)},
-			live:    nil, exists: false, flags: 1,
+			live:    nil, exists: false, conflicts: 1,
 		},
 		{
 			name: "updated, then deleted by the agent: put back the original",
@@ -122,13 +122,13 @@ func TestSimulate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := simulate(customers, tt.changes, tt.live, tt.live != nil)
 			if got.exists != tt.exists {
-				t.Fatalf("exists = %v, want %v (flags %v)", got.exists, tt.exists, got.flags)
+				t.Fatalf("exists = %v, want %v (conflicts %v)", got.exists, tt.exists, got.conflicts)
 			}
 			if tt.exists && firstDifference(customers, got.row, tt.want) != "" {
 				t.Errorf("row = %v, want %v", receipt.Quote(got.row["plan"])+" "+receipt.Quote(got.row["phone"]), receipt.Quote(tt.want["plan"])+" "+receipt.Quote(tt.want["phone"]))
 			}
-			if len(got.flags) != tt.flags {
-				t.Errorf("flags = %q, want %d", got.flags, tt.flags)
+			if len(got.conflicts) != tt.conflicts {
+				t.Errorf("conflicts = %q, want %d", got.conflicts, tt.conflicts)
 			}
 		})
 	}
@@ -170,8 +170,8 @@ func TestRecreatedRowDeletedByAPerson(t *testing.T) {
 		{Op: receipt.Insert, RelID: 1, New: row("id=1", "plan=new", "phone=555")},
 	}
 	got := simulate(customers, changes, nil, false)
-	if got.exists || len(got.flags) != 1 {
-		t.Errorf("exists = %v, flags = %q; want the row left deleted and flagged", got.exists, got.flags)
+	if got.exists || len(got.conflicts) != 1 {
+		t.Errorf("exists = %v, flags = %q; want the row left deleted and a conflict reported", got.exists, got.conflicts)
 	}
 }
 

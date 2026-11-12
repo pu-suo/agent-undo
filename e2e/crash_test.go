@@ -62,8 +62,8 @@ func TestCrashedRecorderLosesNothingAndRepeatsNothing(t *testing.T) {
 	for agentRunning := true; agentRunning; {
 		child := d.startChildRecorder(t)
 		time.Sleep(time.Duration(50+rand.IntN(250)) * time.Millisecond)
-		child.Process.Kill() // SIGKILL: no chance to clean up
-		child.Wait()
+		_ = child.Process.Kill() // SIGKILL: no chance to clean up
+		_ = child.Wait()         // reports the kill, which is expected
 		kills++
 		select {
 		case err := <-agentDone:
@@ -77,8 +77,8 @@ func TestCrashedRecorderLosesNothingAndRepeatsNothing(t *testing.T) {
 
 	child := d.startChildRecorder(t) // a final, undisturbed run
 	d.waitCaughtUp(t)
-	child.Process.Kill()
-	child.Wait()
+	_ = child.Process.Kill()
+	_ = child.Wait()
 
 	seen := map[string]int{}
 	for _, txn := range d.read(t, "run-crash") {

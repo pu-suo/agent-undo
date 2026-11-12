@@ -9,30 +9,41 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+
   test:
+    name: test (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        postgres: ["14", "17"] # the oldest and newest supported versions
+        postgres: ["15", "16", "17", "18"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-
-      - name: Start Postgres ${{ matrix.postgres }}
+      - name: Start PostgreSQL
         run: docker compose up -d --wait
         env:
           PG_VERSION: ${{ matrix.postgres }}
-
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)"
-
-      - run: go vet ./...
-
-      - name: Test (unit, end to end, the 16 hard cases and the crash test)
+      - name: Test
         run: go test -race -count=1 ./...
 
-      - name: Look for known vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

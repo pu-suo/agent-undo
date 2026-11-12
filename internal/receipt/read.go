@@ -75,7 +75,7 @@ func scan(r io.Reader, fn func(line)) (committed int64, lastEnd LSN, err error) 
 	var corrupt error  // first unreadable line after the last commit
 	for n := 1; ; n++ {
 		raw, err := br.ReadBytes('\n')
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return committed, lastEnd, nil // a final line without '\n' was cut off
 		}
 		if err != nil {

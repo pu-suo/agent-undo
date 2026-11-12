@@ -1,11 +1,11 @@
-// Package undo reverses one agent run's changes and never silently overwrites
-// a change someone else made after the agent.
+// Package undo reverses one agent run's changes. If anyone changed a column
+// after the agent did, undo keeps their value and reports a conflict.
 //
 // For each row the run touched, undo starts from the row as it is now and
 // walks the run's changes from newest to oldest. A column the agent set that
 // nobody has touched since goes back to its value from before the run. A
-// column someone else changed afterwards keeps their value, and undo reports
-// it as flagged. A row undo can't safely identify or write is left alone and
+// column someone else changed afterwards keeps their value and is reported
+// as a conflict. A row undo can't safely identify or write is left alone and
 // reported as refused.
 //
 // Preview makes these decisions in a read-only transaction. Apply first seals
@@ -52,15 +52,15 @@ type Plan struct {
 
 // RowPlan is undo's decision for one row.
 type RowPlan struct {
-	Table   string      `json:"table"`
-	Key     string      `json:"key"`
-	Action  Action      `json:"action"`
-	Write   WriteKind   `json:"write,omitempty"`
-	Columns []string    `json:"columns,omitempty"` // the columns of Values, in table order
-	Values  receipt.Row `json:"values,omitempty"`
-	Flags   []string    `json:"flags,omitempty"`
-	Notes   []string    `json:"notes,omitempty"`
-	Reason  string      `json:"reason,omitempty"`
+	Table     string      `json:"table"`
+	Key       string      `json:"key"`
+	Action    Action      `json:"action"`
+	Write     WriteKind   `json:"write,omitempty"`
+	Columns   []string    `json:"columns,omitempty"` // the columns of Values, in table order
+	Values    receipt.Row `json:"values,omitempty"`
+	Conflicts []string    `json:"conflicts,omitempty"`
+	Notes     []string    `json:"notes,omitempty"`
+	Reason    string      `json:"reason,omitempty"`
 }
 
 // Action summarizes what undo does to a row.
@@ -74,9 +74,9 @@ const (
 	Refuse  Action = "refuse"  // undo can't safely touch it
 )
 
-// NeedsPerson reports whether a person should look at the plan: undo refused
-// something or kept someone else's change.
-func (p *Plan) NeedsPerson() bool {
+// NeedsReview reports whether the plan requires manual review: it refuses
+// something, or keeps someone else's change and reports a conflict.
+func (p *Plan) NeedsReview() bool {
 	if p.Refused != "" {
 		return true
 	}
@@ -437,18 +437,18 @@ func (u *undoer) report() {
 			continue
 		}
 		r := RowPlan{Table: h.display, Key: h.keyText, Write: d.write, Values: d.set,
-			Flags: d.target.flags, Notes: d.target.notes}
+			Conflicts: d.target.conflicts, Notes: d.target.notes}
 		if d.set != nil {
 			r.Columns = columnsOf(h.table, d.set)
 		}
 		switch {
 		case d.held != "":
 			r.Action, r.Reason, r.Write, r.Columns, r.Values = Keep, d.held, NoWrite, nil, nil
-		case d.write != NoWrite && len(r.Flags) > 0:
+		case d.write != NoWrite && len(r.Conflicts) > 0:
 			r.Action = Partial
 		case d.write != NoWrite:
 			r.Action = Restore
-		case len(r.Flags) > 0:
+		case len(r.Conflicts) > 0:
 			r.Action = Keep
 		default:
 			r.Action = Nothing

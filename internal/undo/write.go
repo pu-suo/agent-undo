@@ -280,7 +280,7 @@ func (e *executor) batch(ctx context.Context, writes []*decision) error {
 			}
 		}
 		if conflict(err) {
-			return fmt.Errorf("%w: %v", errConflict, err)
+			return fmt.Errorf("%w: %w", errConflict, err)
 		}
 		if err != nil {
 			return err
